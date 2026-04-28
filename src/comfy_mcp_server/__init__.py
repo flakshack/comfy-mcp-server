@@ -25,21 +25,32 @@ prompt_llm = os.environ.get("PROMPT_LLM")
 workflow_index_file = os.environ.get("COMFY_WORKFLOW_INDEX")
 workflows = {}
 ollama_prompt_template = None
+startup_errors = []
 
 if workflow_index_file is not None:
-    index_dir = os.path.dirname(os.path.abspath(workflow_index_file))
-    with open(workflow_index_file, "r") as f:
-        index = json.load(f)
-    ollama_prompt_template = index.get("prompt_template")
-    for entry in index.get("workflows", []):
-        workflow_path = os.path.join(index_dir, entry["file"])
-        with open(workflow_path, "r") as f:
-            template = json.load(f)
-        workflows[entry["name"]] = {
-            "description": entry.get("description", entry["name"]),
-            "nodes": entry.get("nodes", {}),
-            "template": template,
-        }
+    try:
+        index_dir = os.path.dirname(os.path.abspath(workflow_index_file))
+        with open(workflow_index_file, "r") as f:
+            index = json.load(f)
+        ollama_prompt_template = index.get("prompt_template")
+        for entry in index.get("workflows", []):
+            workflow_path = os.path.join(index_dir, entry["file"])
+            try:
+                with open(workflow_path, "r") as f:
+                    template = json.load(f)
+                workflows[entry["name"]] = {
+                    "description": entry.get("description", entry["name"]),
+                    "nodes": entry.get("nodes", {}),
+                    "template": template,
+                }
+            except FileNotFoundError:
+                startup_errors.append(f"- Workflow file not found: {workflow_path}")
+            except json.JSONDecodeError as e:
+                startup_errors.append(f"- Invalid JSON in workflow file '{entry['file']}': {e}")
+    except FileNotFoundError:
+        startup_errors.append(f"- Index file not found: {workflow_index_file}")
+    except json.JSONDecodeError as e:
+        startup_errors.append(f"- Invalid JSON in index file: {e}")
 
 
 def get_file_url(server: str, url_values: str) -> str:
@@ -213,6 +224,8 @@ def run_server():
         errors.append("- COMFY_URL environment variable not set")
     if workflow_index_file is None:
         errors.append("- COMFY_WORKFLOW_INDEX environment variable not set")
+    elif startup_errors:
+        errors.extend(startup_errors)
     elif not workflows:
         errors.append("- No workflows loaded from COMFY_WORKFLOW_INDEX")
 
