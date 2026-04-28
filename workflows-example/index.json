@@ -1,14 +1,16 @@
 {
   "workflows": [
     {
-      "name": "image-anime",
-      "description": "Generates an anime style image. Ideal for fictional situations.",
-      "file": "image-anime.json"
+      "name": "image-basic",
+      "description": "Generates images using ComfyUI's built-in default model. Works out of the box with a standard ComfyUI installation. Lower quality than other options.",
+      "prompt_guidance": "Use Standard Diffusion optimized, comma-separated descriptive tags and style keywords. More important keywords should be listed first as they are given priority. Negative prompts are supported.",
+      "file": "image-basic.json"
     },
     {
-      "name": "image-realistic",
-      "description": "Generates a photo-realistic image.",
-      "file": "image-realistic.json"
+      "name": "flux2",
+      "description": "Generates images using ComfyUI's built-in Flux 2 model. Good for general purpose image generation.",
+      "prompt_guidance": "Use natural language descriptions rather than comma-separated tags. Negative prompts are not supported by this model.",
+      "file": "image_flux2_text_to_image.json"
     }
   ]
 }
