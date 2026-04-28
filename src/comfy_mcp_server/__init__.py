@@ -34,12 +34,15 @@ if workflow_index_file is not None:
             index = json.load(f)
         ollama_prompt_template = index.get("prompt_template")
         for entry in index.get("workflows", []):
+            if not entry.get("enabled", True):
+                continue
             workflow_path = os.path.join(index_dir, entry["file"])
             try:
                 with open(workflow_path, "r") as f:
                     template = json.load(f)
                 workflows[entry["name"]] = {
                     "description": entry.get("description", entry["name"]),
+                    "prompt_guidance": entry.get("prompt_guidance"),
                     "nodes": entry.get("nodes", {}),
                     "template": template,
                 }
@@ -121,7 +124,7 @@ def get_output_node_id(template: dict, overrides: dict) -> str | None:
 
 if ollama_api_base is not None and prompt_llm is not None:
     @mcp.tool()
-    def generate_prompt(topic: str, ctx: Context) -> str:
+    def generate_prompt(topic: str) -> str:
         """Write an image generation prompt for a provided topic"""
 
         model = ChatOllama(base_url=ollama_api_base, model=prompt_llm)
@@ -142,10 +145,15 @@ if ollama_api_base is not None and prompt_llm is not None:
 
 @mcp.tool()
 def list_workflows() -> str:
-    """List available ComfyUI workflows"""
+    """Returns available workflow names, descriptions, and prompt guidance. Call this before generate_image to select the workflow that best matches the user's desired style and to read the prompt guidance for that workflow before constructing the prompt."""
     if not workflows:
         return "No workflows available."
-    lines = [f"- {name}: {info['description']}" for name, info in workflows.items()]
+    lines = []
+    for name, info in workflows.items():
+        line = f"- {name}: {info['description']}"
+        if info.get("prompt_guidance"):
+            line += f" | Prompt guidance: {info['prompt_guidance']}"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -157,7 +165,9 @@ def generate_image(
     negative_prompt: str = None,
     seed: int = None,
 ):
-    """Generate an image using a ComfyUI workflow. Call list_workflows first to see available options.
+    """Generate an image using a ComfyUI workflow.
+    First call list_workflows to select the workflow that best matches the requested style (e.g. use a realistic workflow for photos, an anime workflow for illustrations) and to read its prompt guidance before writing the prompt.
+    Prompt syntax and negative prompt usage vary by workflow — follow the prompt guidance returned by list_workflows for the selected workflow.
     Omit workflow_name to use the default workflow.
     Omit seed to generate a random variation each time, or provide a specific seed to reproduce a previous result.
     After the image is returned, display it inline to the user using markdown image syntax and then stop."""
@@ -199,7 +209,7 @@ def generate_image(
     p = {"prompt": template}
     data = json.dumps(p).encode("utf-8")
     req = request.Request(f"{host}/prompt", data)
-    resp = request.urlopen(req)
+    resp = request.urlopen(req, timeout=30)
     response_ready = False
     if resp.status == 200:
         ctx.info("Submitted prompt")
@@ -208,22 +218,31 @@ def generate_image(
 
         for _ in range(0, comfy_timeout):
             history_req = request.Request(f"{host}/history/{prompt_id}")
-            history_resp = request.urlopen(history_req)
+            history_resp = request.urlopen(history_req, timeout=30)
             if history_resp.status == 200:
                 ctx.info("Checking status...")
                 history_resp_data = json.loads(history_resp.read())
                 if prompt_id in history_resp_data:
-                    status = history_resp_data[prompt_id]["status"]["completed"]
-                    if status:
-                        output_data = (
-                            history_resp_data[prompt_id]
-                            ["outputs"][out_node_id]["images"][0]
-                        )
+                    prompt_status = history_resp_data[prompt_id]["status"]
+                    if prompt_status.get("status_str") == "error":
+                        error_msg = "Unknown error"
+                        for msg_type, msg_data in prompt_status.get("messages", []):
+                            if msg_type == "execution_error":
+                                node_type = msg_data.get("node_type", "")
+                                exception = msg_data.get("exception_message", error_msg)
+                                error_msg = f"{node_type}: {exception}" if node_type else exception
+                                break
+                        return f"ComfyUI error: {error_msg}"
+                    elif prompt_status["completed"]:
+                        outputs = history_resp_data[prompt_id].get("outputs", {})
+                        if out_node_id not in outputs:
+                            return "Image generation completed but the output node produced no result."
+                        output_data = outputs[out_node_id]["images"][0]
                         url_values = urllib.parse.urlencode(output_data)
                         file_url = get_file_url(host, url_values)
                         override_file_url = get_file_url(override_host, url_values)
                         file_req = request.Request(file_url)
-                        file_resp = request.urlopen(file_req)
+                        file_resp = request.urlopen(file_req, timeout=30)
                         if file_resp.status == 200:
                             ctx.info("Image generated")
                             output_file = file_resp.read()
@@ -239,7 +258,7 @@ def generate_image(
             return override_file_url
         return Image(data=output_file, format="png")
     else:
-        return "Failed to generate image. Please check server logs."
+        return f"Image generation timed out after {comfy_timeout} seconds. The workflow may still be running on the ComfyUI server."
 
 
 def run_server():
