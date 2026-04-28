@@ -49,7 +49,7 @@ The `name` is used to select the workflow at runtime. The `description` is shown
 
 ### Example workflows folder
 
-> The `workflows-example/` folder contains two ready-to-use workflows and a matching `index.json` that should work without any special models or configurations in ComfyUI. Copy this folder as a starting point and add your own workflows alongside it.
+> The `workflows-example/` folder contains two ready-to-use workflows and a matching `index.json` that should work without any special models or configurations in ComfyUI, assuming you've previously opened the default image and flux2 templates. Copy this folder as a starting point and add your own workflows alongside it.  Note that you can drag+drop these example workflows into the ComfyUI window to test them.
 
 #### Supported workflow types
 
