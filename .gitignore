@@ -10,3 +10,4 @@ wheels/
 .venv
 .aider*
 .envrc
+workflows-example/.DS_Store
