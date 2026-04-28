@@ -64,16 +64,38 @@ def find_node_by_class(template: dict, class_type: str) -> str | None:
     return None
 
 
+def follow_to_clip(template: dict, node_id: str, max_depth: int = 5) -> str | None:
+    """Walk conditioning connections until a CLIPTextEncode node is found."""
+    if max_depth == 0:
+        return None
+    node = template.get(str(node_id), {})
+    if node.get("class_type") == "CLIPTextEncode":
+        return str(node_id)
+    conditioning = node.get("inputs", {}).get("conditioning")
+    if isinstance(conditioning, list):
+        return follow_to_clip(template, conditioning[0], max_depth - 1)
+    return None
+
+
 def find_prompt_nodes(template: dict) -> tuple[str | None, str | None]:
-    """Follow a KSampler's positive/negative connections to find the prompt node IDs."""
+    """Find positive and negative prompt node IDs by traversing sampler connections."""
     for node in template.values():
-        if node.get("class_type") in ("KSampler", "KSamplerAdvanced"):
-            inputs = node.get("inputs", {})
+        class_type = node.get("class_type")
+        inputs = node.get("inputs", {})
+
+        if class_type in ("KSampler", "KSamplerAdvanced"):
             positive = inputs.get("positive")
             negative = inputs.get("negative")
             pos_id = positive[0] if isinstance(positive, list) else None
             neg_id = negative[0] if isinstance(negative, list) else None
             return pos_id, neg_id
+
+        if class_type == "SamplerCustomAdvanced":
+            guider = inputs.get("guider")
+            if isinstance(guider, list):
+                pos_id = follow_to_clip(template, guider[0])
+                return pos_id, None  # Flux workflows have no negative prompt
+
     return None, None
 
 
@@ -165,8 +187,10 @@ def generate_image(
             template[neg_node_id]["inputs"]["text"] = negative_prompt
 
     for node in template.values():
-        if "seed" in node.get("inputs", {}):
-            node["inputs"]["seed"] = seed if seed is not None else random.randint(0, 0xffffffffffffffff)
+        inputs = node.get("inputs", {})
+        for seed_field in ("seed", "noise_seed"):
+            if seed_field in inputs:
+                inputs[seed_field] = seed if seed is not None else random.randint(0, 0xffffffffffffffff)
 
     out_node_id = get_output_node_id(template, overrides)
     if out_node_id is None:
