@@ -1,106 +1,174 @@
 # Comfy MCP Server
 
-[![smithery badge](https://smithery.ai/badge/@lalanikarim/comfy-mcp-server)](https://smithery.ai/server/@lalanikarim/comfy-mcp-server)
-
-> A server using FastMCP framework to generate images based on prompts via a remote Comfy server.
+> A server using the FastMCP framework to generate images via a remote ComfyUI server.
 
 ## Overview
 
-This script sets up a server using the FastMCP framework to generate images based on prompts using a specified workflow. It interacts with a remote Comfy server to submit prompts and retrieve generated images.
+Comfy MCP Server connects AI assistants (such as LM Studio or Claude Desktop) to a remote ComfyUI instance via the Model Context Protocol (MCP). It exposes tools for listing available (exported) workflows and generating images, with support for runtime control of prompts and seeds.
+
+Workflow JSON files are used as exported directly from ComfyUI — no manual editing required. A simple index file is used to register workflows and provide AI-friendly descriptions so it can decide which workflow to use for your image based on context.
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) package and project manager for Python.
-- Workflow file exported from Comfy UI. This code includes a sample `Flux-Dev-ComfyUI-Workflow.json` which is only used here as reference. You will need to export from your workflow and set the environment variables accordingly.
+- [uv](https://docs.astral.sh/uv/) package and project manager for Python
+- A running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) instance accessible over the network
+- One or more workflow JSON files exported from ComfyUI
 
-You can install the required packages for local development:
+## Setup
 
-```bash
-uvx mcp[cli]
+### 1. Create a workflows folder
+
+On the computer running your AI assistant (not the remote computer running ComfyUI), create a folder to store your workflow files, for example `/path/to/workflows/`.
+
+### 2. Export a ComfyUI workflow
+
+Export ComfyUI workflows directly from the ComfyUI web UI and place them in this folder. Ensure that your workflows work properly in ComfyUI first; the example files have models you might not have installed.  If the workflow works in ComfyUI, no editing of the workflow files should be needed.
+
+### 3. Create an index.json file
+
+Create an `index.json` file in the same folder. This is the only file you need to edit manually.
+
+```json
+{
+  "workflows": [
+    {
+      "name": "my-workflow",
+      "description": "A clear description that helps the AI choose the right workflow.",
+      "file": "my-workflow.json"
+    },
+    {
+      "name": "another-workflow",
+      "description": "Another workflow for a different style or purpose.",
+      "file": "another-workflow.json"
+    }
+  ]
+}
+```
+
+The `name` is used to select the workflow at runtime. The `description` is shown to the AI so it can pick the most appropriate workflow for the user's request.
+
+### Example workflows folder
+
+> The `workflows-example/` folder in this repository contains Flux and Stable Diffusion example workflows and a matching `index.json`. You can use it as a reference or copy it as a starting point. Note that all workflows require the appropriate models to be installed in your ComfyUI instance.  You can drag and drop these workflows into ComfyUI and it should prompt you to download missing files.  The Flux workflow is not currently enabled listed in the `index.json` file. Suggest using either Flux or Stable Diffusion or update the description so the LLM will know how to choose.
+
+#### Supported workflow types
+
+Comfy MCP Server automatically detects nodes by traversing the workflow graph. The following workflow architectures are supported out of the box:
+
+| Architecture | Sampler node | Negative prompt |
+|---|---|---|
+| SD 1.5 / SDXL | `KSampler` or `KSamplerAdvanced` | Supported |
+| Flux | `SamplerCustomAdvanced` | Not used (Flux does not support negative prompts) |
+
+Workflows using other advanced or custom node structures may require node overrides (see below).
+
+#### Optional: node overrides
+
+Comfy MCP Server automatically detects the positive prompt, negative prompt, and output nodes in your workflow by traversing the node graph. If a workflow uses an unusual structure, you can override the detected node IDs per workflow:
+
+```json
+{
+  "workflows": [
+    {
+      "name": "custom-workflow",
+      "description": "Workflow with non-standard node wiring.",
+      "file": "custom.json",
+      "nodes": {
+        "positive_prompt": "6",
+        "negative_prompt": "7",
+        "output": "25"
+      }
+    }
+  ]
+}
+```
+
+#### Optional: custom prompt template
+
+If you are using the optional Ollama prompt generation feature, you can override the default prompt template at the top level of `index.json`. The `{topic}` placeholder is required.
+
+```json
+{
+  "prompt_template": "You are an image prompt specialist. Given the topic below, respond with exactly two lines:\nPositive: <descriptive tags>\nNegative: <exclusion tags>\n\nTopic: {topic}\n",
+  "workflows": [...]
+}
 ```
 
 ## Configuration
 
 Set the following environment variables:
 
-- `COMFY_URL` to point to your Comfy server URL.
-- `COMFY_WORKFLOW_JSON_FILE` to point to the absolute path of the API export json file for the comfyui workflow.
-- `PROMPT_NODE_ID` to the id of the text prompt node.
-- `OUTPUT_NODE_ID` to the id of the output node with the final image.
-- `OUTPUT_MODE` to either `url` or `file` to select desired output.
-
-Optionally, if you have an [Ollama](https://ollama.com) server running, you can connect to it for prompt generation.
-
-- `OLLAMA_API_BASE` to the url where ollama is running.
-- `PROMPT_LLM` to the name of the model hosted on ollama for prompt generation.
-
-Example:
-
-```bash
-export COMFY_URL=http://your-comfy-server-url:port
-export COMFY_WORKFLOW_JSON_FILE=/path/to/the/comfyui_workflow_export.json
-export PROMPT_NODE_ID=6 # use the correct node id here
-export OUTPUT_NODE_ID=9 # use the correct node id here
-export OUTPUT_MODE=file
-```
+| Variable | Required | Description |
+|---|---|---|
+| `COMFY_URL` | Yes | URL of your ComfyUI server, including port |
+| `COMFY_WORKFLOW_INDEX` | Yes | Absolute path to your `index.json` file |
+| `OUTPUT_MODE` | No | Set to `url` to return an image URL instead of binary data |
+| `COMFY_URL_EXTERNAL` | No | Public-facing URL to use when `OUTPUT_MODE=url` |
+| `COMFY_TIMEOUT` | No | Seconds to wait for image generation (default: `120`) |
+| `OLLAMA_API_BASE` | No | URL of an Ollama server — enables the `generate_prompt` tool |
+| `PROMPT_LLM` | No | Ollama model name to use for prompt generation |
 
 ## Usage
 
-Comfy MCP Server can be launched by the following command:
+### Running from a local clone
 
 ```bash
-uvx comfy-mcp-server
+uvx --from /path/to/comfy-mcp-server comfy-mcp-server
 ```
 
-### Example Claude Desktop Config
+### Example LM Studio config
 
 ```json
 {
   "mcpServers": {
-    "Comfy MCP Server": {
-      "command": "/path/to/uvx",
+    "comfyui": {
+      "command": "uvx",
       "args": [
+        "--from",
+        "/path/to/comfy-mcp-server",
+        "--no-cache",
         "comfy-mcp-server"
       ],
       "env": {
         "COMFY_URL": "http://your-comfy-server-url:port",
-        "COMFY_WORKFLOW_JSON_FILE": "/path/to/the/comfyui_workflow_export.json",
-        "PROMPT_NODE_ID": "6",
-        "OUTPUT_NODE_ID": "9",
+        "COMFY_WORKFLOW_INDEX": "/path/to/workflows/index.json",
         "OUTPUT_MODE": "file",
+        "COMFY_TIMEOUT": "120"
       }
     }
   }
 }
-
 ```
 
-## Functionality
+## Tools
 
-### `generate_image(prompt: str, ctx: Context) -> Image | str`
+### `list_workflows()`
 
-This function generates an image using a specified prompt. It follows these steps:
+Returns a list of available workflows with their descriptions. The AI should call this before `generate_image` to choose the most appropriate workflow.  Keep in mind that this is not reading workflows you may have in ComfyUI, this is reading files via the index that you have copied to the computer running LM Studio.
 
-1. Checks if all the environment variable are set.
-2. Loads a prompt template from a JSON file.
-3. Submits the prompt to the Comfy server.
-4. Polls the server for the status of the prompt processing.
-5. Retrieves and returns the generated image once it's ready.
+### `generate_image(prompt, workflow_name, negative_prompt, seed)`
 
-### `generate_prompt(topic: str, ctx: Context) -> str`
+Generates an image using the specified ComfyUI workflow.
 
-This function generates a comprehensive image generation prompt from specified topic.
+| Parameter | Required | Description |
+|---|---|---|
+| `prompt` | Yes | The positive image generation prompt |
+| `workflow_name` | No | Name of the workflow to use (defaults to the first workflow in index.json) |
+| `negative_prompt` | No | Things to exclude from the image |
+| `seed` | No | Omit for a random result each time, or provide a specific value to reproduce a previous image |
+
+Positive and negative prompt nodes are detected automatically from the workflow graph. The output node is detected by finding the `SaveImage` node. Both can be overridden in `index.json` if needed.
+
+### `generate_prompt(topic)` *(optional)*
+
+Generates a positive and negative image generation prompt from a short topic description. Only available when `OLLAMA_API_BASE` and `PROMPT_LLM` environment variables are set.
 
 ## Dependencies
 
-- `mcp`: For setting up the FastMCP server.
-- `json`: For handling JSON data.
-- `urllib`: For making HTTP requests.
-- `time`: For adding delays in polling.
-- `os`: For accessing environment variables.
-- `langchain`: For creating simple LLM Prompt chain to generate image generation prompt from topic.
-- `langchain-ollama`: For ollama specific modules for LangChain.
+- `mcp[cli]`: FastMCP server framework
+- `langchain`: LLM prompt chain for optional prompt generation
+- `langchain-ollama`: Ollama integration for LangChain
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/lalanikarim/comfy-mcp-server/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

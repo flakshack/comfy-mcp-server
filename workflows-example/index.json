@@ -1,0 +1,14 @@
+{
+  "workflows": [
+    {
+      "name": "image-anime",
+      "description": "Generates an anime style image. Ideal for fictional situations.",
+      "file": "image-anime.json"
+    },
+    {
+      "name": "image-realistic",
+      "description": "Generates a photo-realistic image.",
+      "file": "image-realistic.json"
+    }
+  ]
+}
